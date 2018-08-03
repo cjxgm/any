@@ -1,5 +1,5 @@
 //
-// Implementation of N4562 std::experimental::any (merged into C++17) for C++11 compilers.
+// Implementation of N4562 std::experimental::any (merged into C++17) for C++14 compilers.
 //
 // See also:
 //   + http://en.cppreference.com/w/cpp/any
@@ -7,8 +7,13 @@
 //   + http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/n4562.html#any
 //   + https://cplusplus.github.io/LWG/lwg-active.html#2509
 //
-//
 // Copyright (c) 2016 Denilson das Mercês Amorim
+//
+// Changelog:
+//   + Requires C++14
+//   + Defer type not copyable error into runtime.
+//
+// The above changes: Copyright (C) 2018 Giumo Clanjor (哆啦比猫/兰威举)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -17,11 +22,24 @@
 #define LINB_ANY_HPP
 #pragma once
 #include <typeinfo>
+#include <typeindex>
 #include <type_traits>
 #include <stdexcept>
+#include <vector>
 
 namespace linb
 {
+    namespace
+    {
+        template <class T>
+        static constexpr bool is_copyable = std::is_copy_constructible<T>::value;
+
+        template <class T>
+        static constexpr bool is_copyable<T const> = is_copyable<T>;
+
+        template <class T, class Alloc>
+        static constexpr bool is_copyable<std::vector<T, Alloc>> = is_copyable<T>;
+    }
 
 class bad_any_cast : public std::bad_cast
 {
@@ -30,6 +48,22 @@ public:
     {
         return "bad any cast";
     }
+};
+
+struct bad_any_copy : public std::runtime_error
+{
+    bad_any_copy(std::type_index id)
+        : std::runtime_error{"bad any copy"}
+        , id{id}
+    {}
+
+    auto type() const noexcept -> std::type_index
+    {
+        return id;
+    }
+
+private:
+    std::type_index id;
 };
 
 class any final
@@ -76,8 +110,6 @@ public:
     template<typename ValueType, typename = typename std::enable_if<!std::is_same<typename std::decay<ValueType>::type, any>::value>::type>
     any(ValueType&& value)
     {
-        static_assert(std::is_copy_constructible<typename std::decay<ValueType>::type>::value,
-            "T shall satisfy the CopyConstructible requirements.");
         this->construct(std::forward<ValueType>(value));
     }
 
@@ -105,8 +137,6 @@ public:
     template<typename ValueType, typename = typename std::enable_if<!std::is_same<typename std::decay<ValueType>::type, any>::value>::type>
     any& operator=(ValueType&& value)
     {
-        static_assert(std::is_copy_constructible<typename std::decay<ValueType>::type>::value,
-            "T shall satisfy the CopyConstructible requirements.");
         any(std::forward<ValueType>(value)).swap(*this);
         return *this;
     }
@@ -198,6 +228,34 @@ private: // Storage and Virtual Method Table
         void(*swap)(storage_union& lhs, storage_union& rhs) noexcept;
     };
 
+    template <class T>
+    static auto do_dynamic_copy(const storage_union& src, storage_union& dest)
+        -> std::enable_if_t<is_copyable<std::decay_t<T>>>
+    {
+        dest.dynamic = new T(*reinterpret_cast<const T*>(src.dynamic));
+    }
+
+    template <class T>
+    static auto do_dynamic_copy(const storage_union& src, storage_union& dest)
+        -> std::enable_if_t<!is_copyable<std::decay_t<T>>>
+    {
+        throw bad_any_copy{typeid(std::decay_t<T>)};
+    }
+
+    template <class T>
+    static auto do_stack_copy(const storage_union& src, storage_union& dest)
+        -> std::enable_if_t<is_copyable<std::decay_t<T>>>
+    {
+        new (&dest.stack) T(reinterpret_cast<const T&>(src.stack));
+    }
+
+    template <class T>
+    static auto do_stack_copy(const storage_union& src, storage_union& dest)
+        -> std::enable_if_t<!is_copyable<std::decay_t<T>>>
+    {
+        throw bad_any_copy{typeid(std::decay_t<T>)};
+    }
+
     /// VTable for dynamically allocated storage.
     template<typename T>
     struct vtable_dynamic
@@ -215,7 +273,7 @@ private: // Storage and Virtual Method Table
 
         static void copy(const storage_union& src, storage_union& dest)
         {
-            dest.dynamic = new T(*reinterpret_cast<const T*>(src.dynamic));
+            do_dynamic_copy<T>(src, dest);
         }
 
         static void move(storage_union& src, storage_union& dest) noexcept
@@ -247,7 +305,7 @@ private: // Storage and Virtual Method Table
 
         static void copy(const storage_union& src, storage_union& dest)
         {
-            new (&dest.stack) T(reinterpret_cast<const T&>(src.stack));
+            do_stack_copy<T>(src, dest);
         }
 
         static void move(storage_union& src, storage_union& dest) noexcept
@@ -459,3 +517,4 @@ namespace std
 }
 
 #endif
+
