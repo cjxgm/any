@@ -180,7 +180,7 @@ namespace nonstd
 
         auto type() const noexcept -> std::type_index
         {
-            return (model ? model->type : std::type_index{typeid(void)});
+            return (model ? model->type() : std::type_index{typeid(void)});
         }
 
         template <class T, class... Args>
@@ -218,7 +218,8 @@ namespace nonstd
             if (model == nullptr)
                 return nullptr;
 
-            if (model->type != typeid(U))
+            // Merging of data structures are not reliable across translation units. Even the type_info structure may not be merged.
+            if (model != model_of<U>() && model->type() != typeid(U))
                 return nullptr;
 
             if constexpr (any_detail::can_store_internally<U>) {
@@ -238,7 +239,8 @@ namespace nonstd
             if (model == nullptr)
                 return nullptr;
 
-            if (model->type != typeid(U))
+            // Merging of data structures are not reliable across translation units. Even the type_info structure may not be merged.
+            if (model != model_of<U>() && model->type() != typeid(U))
                 return nullptr;
 
             if constexpr (any_detail::can_store_internally<U>) {
@@ -282,10 +284,7 @@ namespace nonstd
 
         struct storage_model: any_detail::interface
         {
-            std::type_index type;
-
-            storage_model(std::type_index type) noexcept: type{type} {}
-
+            virtual auto type() const noexcept -> std::type_index = 0;
             virtual auto free(char* storage) const noexcept -> void = 0;
             virtual auto copy_construct(char const* src, char* dst) const -> void = 0;      // assumes src is initialized, while dst is uninitialized.
             virtual auto move_construct(char* src, char* dst) const noexcept -> void = 0;   // assumes src is initialized, while dst is uninitialized.
@@ -296,7 +295,10 @@ namespace nonstd
         template <class T>
         struct internal_storage final: storage_model
         {
-            internal_storage() noexcept: storage_model{typeid(T)} {}
+            auto type() const noexcept -> std::type_index override
+            {
+                return typeid(T);
+            }
 
             auto free(char* storage) const noexcept -> void override
             {
@@ -342,7 +344,10 @@ namespace nonstd
         template <class T>
         struct external_storage final: storage_model
         {
-            external_storage() noexcept: storage_model{typeid(T)} {}
+            auto type() const noexcept -> std::type_index override
+            {
+                return typeid(T);
+            }
 
             auto free(char* storage) const noexcept -> void override
             {

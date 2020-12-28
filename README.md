@@ -12,3 +12,9 @@ This `nonstd::any` is different from `std::any`, in which:
 - Moving an any is always `noexcept`. Assumes all types are `noexcept` movable, even if they are not.
 - Moving an any leaves the original object in empty state (i.e. always clears the moved-out object).
 
+You may need to compile with this flag if you are using `libc++` as your standard library (Android / Emscripten / etc.):
+
+```
+-D_LIBCPP_HAS_MERGED_TYPEINFO_NAMES_DEFAULT=0           # prevent `type_info::operator == ()` from comparing pointers.
+```
+
